@@ -1,0 +1,31 @@
+
+kaggle:
+  dataset: "alirezamehrad/red-and-white-wine-quality"
+  file_pattern: "*.csv"
+  expected_files: ["Red and White Wine Quality.csv"]
+  expected_count: null
+
+ingest:
+  output_format: "parquet"
+  compression: "snappy"
+  chunk_size_rows: 50000
+  convert_dtypes: true         # Attempt automatic dtype inference (pyarrow)
+  validate_schema: true        # Fail loudly on missing required columns
+
+schema:
+  # Required columns — pipeline fails loudly if any are missing post-ingest
+  # Column names from the shibumohapatra/house-price dataset (California Housing)
+  required_columns:
+    - fixed acidity
+    - volatile acidity
+    - citric acid
+    - residual sugar
+    - chlorides
+    - free sulfur dioxide
+    - total sulfur dioxide
+    - density
+    - ph
+    - sulphates
+    - alcohol
+    - quality 
+    - type 

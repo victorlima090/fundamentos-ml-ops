@@ -1,0 +1,22 @@
+pipeline:
+  name: "wine-recommendation"
+  version: "1.0.0"
+  description: "A pipeline for wine recommendation system"
+
+paths:
+  raw_data_dir: "data/raw"
+  processed_data_dir: "data/processed"
+  output_filename: "wine_quality.parquet"
+
+execution:
+  skip_download_if_exists: true
+  skip_ingest_if_exists: true
+  force_redownload: false
+  force_ingest: false
+
+logging:
+  level: "INFO"                    # DEBUG | INFO | WARNING | ERROR
+  format: "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+  datefmt: "%Y-%m-%d %H:%M:%S"
+  log_to_file: false
+  log_file: "pipeline.log"
