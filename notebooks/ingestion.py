@@ -43,7 +43,7 @@ else:
     logger.error("Credenciais do Kaggle não encontradas. Verifique o arquivo secrets.env.")
 
 logger.info( "Baixando Dataset...")
-download_dataset(
+downloaded = download_dataset(
     dataset=data_config["kaggle"]["dataset"],
     expected_files=data_config["kaggle"]["expected_files"],
     destination_dir=raw_dir,
@@ -52,3 +52,37 @@ download_dataset(
     logging_config=logger_config
 )
 logger.info("Dataset Baixado com Sucesso!")
+
+
+
+logger.info('Arquivos prontos: %d', len(downloaded))
+
+# verificar o conteúdo do diretório raw
+for f in sorted(raw_dir.glob('*.csv')):
+    logger.info('  %s (%.1f KB)', f.name, f.stat().st_size / 1024)
+
+# %%
+# definir o caminho de saída do Parquet
+processed_dir = ROOT_DIR / pipeline_config['paths']['processed_data_dir']
+output_path = processed_dir / pipeline_config['paths']['output_filename']
+
+logger.info('Saída: %s', output_path)
+
+# obtendo configurações de processamento
+compression = data_config.get('ingest').get('compression', 'snappy')
+chunk_size = data_config.get('ingest').get('chunk_size_rows', 50_000)
+validate = data_config.get('ingest').get('validate_schema')
+required_cols = data_config.get('schema').get('required_columns')
+skip_ingest = pipeline_config.get('execution').get('skip_ingest_if_exists')
+force_ingest = pipeline_config.get('execution').get('force_ingest')
+
+result_path = ingest_csv_to_parquet(
+    raw_dir=raw_dir,
+    output_path=output_path,
+    compression=compression,
+    chunk_size_rows=chunk_size,
+    validate_schema=validate,
+    skip_if_exists=skip_ingest,
+    force=force_ingest,
+    logging_config=logger_config
+)
