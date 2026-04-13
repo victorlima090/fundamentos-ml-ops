@@ -69,7 +69,6 @@ def download_dataset(
     expected_files: list[str],
     destination_dir: Path,
     skip_if_exists: bool = True,
-    force: bool = False,
     logging_config: dict[str, Any] | None = None,
 ) -> list[Path]:
     """
@@ -83,7 +82,6 @@ def download_dataset(
         expected_files:  List of exact filenames to download.
         destination_dir: Local directory where files will be saved.
         skip_if_exists:  Skip download if all expected files are already present.
-        force:           Override skip_if_exists — always re-download.
         logging_config:  Optional logging config dict.
 
     Returns:
@@ -99,10 +97,10 @@ def download_dataset(
     destination_dir = Path(destination_dir)
     destination_dir.mkdir(parents=True, exist_ok=True)
 
-    if not force and skip_if_exists and _files_already_present(destination_dir, expected_files):
+    if skip_if_exists and _files_already_present(destination_dir, expected_files):
         logger.info(
             "All %d expected file(s) already present in '%s'. Skipping download. "
-            "(Use --force-download to re-download.)",
+            "(Use --skip_download_if_exists-false to re-download.)",
             len(expected_files),
             destination_dir,
         )

@@ -47,8 +47,7 @@ downloaded = download_dataset(
     dataset=data_config["kaggle"]["dataset"],
     expected_files=data_config["kaggle"]["expected_files"],
     destination_dir=raw_dir,
-    skip_if_exists=True,
-    force=False,
+    skip_if_exists=pipeline_config["execution"]["skip_download_if_exists"],
     logging_config=logger_config
 )
 logger.info("Dataset Baixado com Sucesso!")
@@ -83,6 +82,5 @@ result_path = ingest_csv_to_parquet(
     chunk_size_rows=chunk_size,
     validate_schema=validate,
     skip_if_exists=skip_ingest,
-    force=force_ingest,
     logging_config=logger_config
 )

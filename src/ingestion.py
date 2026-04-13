@@ -11,7 +11,6 @@ def ingest_csv_to_parquet(
     validate_schema: bool = True,
     required_columns: list[str] | None = None,
     skip_if_exists: bool = True,
-    force: bool = False,
     logging_config: dict[str, Any] | None = None,
 ) -> Path:
     """
@@ -28,7 +27,6 @@ def ingest_csv_to_parquet(
         validate_schema:  If True, verify required_columns are present.
         required_columns: Column names that must be present post-conversion.
         skip_if_exists:   If True and output_path already exists, skip entirely.
-        force:            Override skip_if_exists.
         logging_config:   Optional logging config dict.
 
     Returns:
@@ -50,7 +48,7 @@ def ingest_csv_to_parquet(
     output_path = Path(output_path)
 
     # ── Idempotency check ─────────────────────────────────────────────────
-    if not force and skip_if_exists and output_path.exists() and output_path.stat().st_size > 0:
+    if skip_if_exists and output_path.exists() and output_path.stat().st_size > 0:
         size_mb = output_path.stat().st_size / (1024 ** 2)
         logger.info(
             "Ingested file already exists at '%s' (%.1f MB). Skipping ingest. "

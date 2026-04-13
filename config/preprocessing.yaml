@@ -1,0 +1,81 @@
+# preprocessing.yaml — Configuração de Pré-processamento e Feature Engineering
+#
+# Princípio MLOps: separação entre política (YAML) e mecanismo (código).
+# Para ajustar qualquer transformação, edite apenas este arquivo.
+# O código em src/preprocessing.py não precisa mudar.
+#
+# Pipeline: data/processed/house_price.parquet
+#        → data/features/house_price_features.parquet
+
+# ── Saída ──────────────────────────────────────────────────────────────────────
+preprocessing:
+  output_dir: "data/features"
+  output_filename: "wine_quality_features.parquet"
+  compression: "snappy"
+
+ratio_features:
+  - name: "alcohol_over_isWhite"
+    numerator: "alcohol"
+    denominator: "isWhite"
+  - name: "density_over_alcohol"
+    numerator: "density"
+    denominator: "alcohol"
+  - name: "pH_over_alcohol"
+    numerator: "pH"
+    denominator: "alcohol"
+  - name: "density_over_isWhite"
+    numerator: "density"
+    denominator: "isWhite"
+  - name: "volatile_acidity_over_alcohol"
+    numerator: "volatile_acidity"
+    denominator: "alcohol"
+  - name: "fixed_acidity_over_chlorides"
+    numerator: "fixed_acidity"
+    denominator: "chlorides"
+  - name: "fixed_acidity_over_alcohol"
+    numerator: "fixed_acidity"
+    denominator: "alcohol"
+
+# ── 4. Transformação Logarítmica (log1p) ──────────────────────────────────────
+# Features com skewness > 1.5 se beneficiam de log1p:
+#   - normaliza a distribuição
+#   - reduz o impacto de outliers extremos
+#   - melhora a linearidade com o target
+# log1p(x) = log(1+x) — seguro para x=0
+# Colunas originais são mantidas; colunas log_ são adicionadas.
+log_transform:
+  columns:
+    - fixed_acidity
+    - volatile_acidity
+    - citric_acid
+    - residual_sugar
+    - chlorides
+    - free_sulfur_dioxide    
+    - density
+    - ph
+    - sulphates
+    - alcohol
+    - quality 
+
+
+# ── 6. Features Polinomiais e Interações ─────────────────────────────────────
+# Captura não-linearidade e efeitos combinados detectados na EDA.
+# median_income_x_housing_median_age: r=0.589 com target (bairros ricos E antigos)
+# median_income_squared: captura retorno decrescente da renda em alta faixa
+polynomial_features:
+  - name: ""
+    columns: [""]       # x²  (degree=2, single feature)
+  - name: ""
+    columns: [""]  # x²
+  - name: ""
+    columns: ["", ""]  # interação (produto)
+
+
+# ── 8. Seleção de Features ────────────────────────────────────────────────────
+# Baseado no ranking do EDA Report (Seção 13 — Priority Feature List).
+# Colunas brutas de contagem (total_rooms, total_bedrooms, population, households)
+# são EXCLUÍDAS — substituídas pelas razões e versões log.
+# O target (median_house_value) é mantido para facilitar o split treino/teste.
+feature_selection:
+  target: ""
+  features_to_keep:
