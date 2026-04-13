@@ -14,18 +14,12 @@ preprocessing:
   compression: "snappy"
 
 ratio_features:
-  - name: "alcohol_over_isWhite"
-    numerator: "alcohol"
-    denominator: "isWhite"
   - name: "density_over_alcohol"
     numerator: "density"
     denominator: "alcohol"
   - name: "pH_over_alcohol"
     numerator: "pH"
     denominator: "alcohol"
-  - name: "density_over_isWhite"
-    numerator: "density"
-    denominator: "isWhite"
   - name: "volatile_acidity_over_alcohol"
     numerator: "volatile_acidity"
     denominator: "alcohol"
@@ -34,6 +28,12 @@ ratio_features:
     denominator: "chlorides"
   - name: "fixed_acidity_over_alcohol"
     numerator: "fixed_acidity"
+    denominator: "alcohol"
+  - name: "chlorides_over_sulphates"
+    numerator: "chlorides"
+    denominator: "sulphates"
+  - name: "chlorides_over_alcohol"
+    numerator: "chlorides"
     denominator: "alcohol"
 
 # ── 4. Transformação Logarítmica (log1p) ──────────────────────────────────────
@@ -47,15 +47,11 @@ log_transform:
   columns:
     - fixed_acidity
     - volatile_acidity
-    - citric_acid
     - residual_sugar
     - chlorides
     - free_sulfur_dioxide    
-    - density
-    - ph
     - sulphates
-    - alcohol
-    - quality 
+     
 
 
 # ── 6. Features Polinomiais e Interações ─────────────────────────────────────
@@ -77,5 +73,35 @@ polynomial_features:
 # são EXCLUÍDAS — substituídas pelas razões e versões log.
 # O target (median_house_value) é mantido para facilitar o split treino/teste.
 feature_selection:
-  target: ""
-  features_to_keep:
+  target: "isRecommended"
+  features_to_keep: 
+    -   fixed_acidity                       
+    -   volatile_acidity                    
+    -   citric_acid                         
+    -   residual_sugar                      
+    -   chlorides                           
+    -   free_sulfur_dioxide                 
+    -   total_sulfur_dioxide                
+    -   density                             
+    -   pH                                  
+    -   sulphates                           
+    -   alcohol                                               
+    -   isWhite                             
+    -   chlorides_over_sulphates                
+    -   density_over_alcohol                
+    -   pH_over_alcohol                     
+    -   chlorides_over_alcohol                
+    -   volatile_acidity_over_alcohol       
+    -   fixed_acidity_over_chlorides        
+    -   fixed_acidity_over_alcohol          
+    -   log_fixed_acidity                   
+    -   log_volatile_acidity                
+    -   log_residual_sugar                  
+    -   log_chlorides                       
+    -   log_free_sulfur_dioxide             
+    -   log_sulphates                       
+
+target:
+  old_feature: "quality"
+  new_feature: "isRecommended"
+  threshold: 8  # quality >= 8 é recomendado (1), caso contrário não recomendado (0)

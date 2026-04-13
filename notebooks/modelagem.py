@@ -41,7 +41,8 @@ import matplotlib
 import numpy as np
 import pandas as pd
 import seaborn as sns
-matplotlib.use('Agg')           # backend não-interativo: salva em arquivo sem abrir janela
+
+
 from pathlib import Path
 import pyarrow.parquet as pq
 import matplotlib.pyplot as plt
@@ -54,15 +55,7 @@ import mlflow.sklearn
 # Importações — scikit-learn
 from sklearn.base import clone
 from sklearn.model_selection import KFold, train_test_split, learning_curve
-from sklearn.metrics import (
-    mean_squared_error,
-    mean_absolute_error,
-    r2_score,
-    mean_absolute_percentage_error,
-)
-from sklearn.inspection import permutation_importance
-from sklearn.linear_model import Ridge
-from sklearn.ensemble import StackingRegressor, VotingRegressor
+
 
 # Definições de caminhos — mesmo padrão dos outros walkthroughs
 ROOT_DIR   = Path(__file__).resolve().parent.parent
@@ -73,6 +66,8 @@ for _p in PATHS_LIST:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from src.modeling import _aggregate_fold_metrics, _build_pipeline, _run_cv
+matplotlib.use('Agg')           # backend não-interativo: salva em arquivo sem abrir janela
 # Importações do projeto
 from src.utils.logger import get_logger
 from src.utils.config_loader import load_yaml
@@ -93,187 +88,6 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # %%
-def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
-    """Calcula as quatro métricas de regressão usadas neste pipeline."""
-    rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
-    mae  = float(mean_absolute_error(y_true, y_pred))
-    r2   = float(r2_score(y_true, y_pred))
-    mape = float(mean_absolute_percentage_error(y_true, y_pred) * 100)
-    return {'rmse': rmse, 'mae': mae, 'r2': r2, 'mape': mape}
-
-# %%
-def _run_cv(model, X: pd.DataFrame, y: pd.Series, cv: KFold) -> list[dict]:
-    """
-    Executa Cross-Validation e retorna métricas por fold.
-
-    Clona o modelo em cada fold para evitar contaminação de estado entre folds.
-    Retorna lista de dicts: [{fold, rmse, mae, r2, mape}, ...].
-    """
-    fold_metrics = []
-    for fold_i, (train_idx, val_idx) in enumerate(cv.split(X, y)):
-        m = clone(model)
-        m.fit(X.iloc[train_idx], y.iloc[train_idx])
-        y_pred = m.predict(X.iloc[val_idx])
-        metrics = _compute_metrics(y.iloc[val_idx].values, y_pred)
-        metrics['fold'] = fold_i + 1
-        fold_metrics.append(metrics)
-    return fold_metrics
-
-# %%
-def _aggregate_fold_metrics(fold_metrics: list[dict]) -> dict:
-    """Agrega métricas de todos os folds em média ± desvio padrão."""
-    df = pd.DataFrame(fold_metrics)
-    result = {}
-    for col in ['rmse', 'mae', 'r2', 'mape']:
-        result[f'cv_{col}_mean'] = float(df[col].mean())
-        result[f'cv_{col}_std']  = float(df[col].std())
-    return result
-
-# %%
-def _suggest_param(trial: optuna.Trial, name: str, spec: dict):
-    """
-    Constrói uma sugestão Optuna a partir de um spec do search_space do YAML.
-
-    Tipos suportados:
-        log_float  → suggest_float(..., log=True)
-        float      → suggest_float(...)
-        int        → suggest_int(...)
-        categorical→ suggest_categorical(...)
-    """
-    ptype = spec['type']
-    # Garante tipos numéricos — PyYAML pode parsear notação científica (1.0e-4)
-    # como string em algumas versões; float()/int() normalizam sem custo.
-    if ptype == 'log_float':
-        return trial.suggest_float(name, float(spec['low']), float(spec['high']), log=True)
-    elif ptype == 'float':
-        return trial.suggest_float(name, float(spec['low']), float(spec['high']))
-    elif ptype == 'int':
-        return trial.suggest_int(name, int(spec['low']), int(spec['high']))
-    elif ptype == 'categorical':
-        return trial.suggest_categorical(name, spec['choices'])
-    else:
-        raise ValueError(f'Tipo de search_space desconhecido: {ptype!r}')
-
-# %%
-def _build_model(model_cfg: dict, extra_params: dict | None = None):
-    """
-    Instancia um modelo usando importlib a partir do config (module + class).
-
-    Mescla default_params com extra_params (extra_params sobrescreve o default).
-    Permite instanciar qualquer modelo sklearn-compatível sem hardcode.
-    """
-    module    = importlib.import_module(model_cfg['module'])
-    cls       = getattr(module, model_cfg['class'])
-    params    = dict(model_cfg.get('default_params') or {})
-    if extra_params:
-        params.update(extra_params)
-    return cls(**params)
-
-# %%
-def _build_pipeline(
-    model_cfg: dict,
-    model_params: dict | None,
-    reducer_params: dict | None,
-    pipe_cfg: dict,
-) -> SklearnPipeline:
-    """
-    Constrói um sklearn Pipeline leak-free para um modelo:
-
-        GroupMedianImputer(s)       ← um por entrada em pipe_cfg['imputation']
-        StandardScalerTransformer   ← colunas de pipe_cfg['scaling']['columns']
-        FeatureReducer              ← method e params de reducer_params
-        estimator                   ← instanciado via _build_model
-
-    Por que usar Pipeline?
-    - fit() em cada fold de CV chama fit() em TODOS os steps, usando apenas
-      os índices de treino daquele fold.  Nenhum dado de validação/holdout
-      vaza para o imputador ou scaler.
-    - clone() (usado em _run_cv) preserva os hiperparâmetros sem o estado
-      aprendido, garantindo isolação entre folds.
-
-    Parâmetros
-    ----------
-    model_cfg      : dict do models section em modeling.yaml
-    model_params   : parâmetros extras do Optuna (sobrescrevem default_params)
-    reducer_params : parâmetros para FeatureReducer (method + kwargs do método ativo)
-    pipe_cfg       : dict de pipeline section em modeling.yaml
-    """
-    steps = []
-
-    # ── Imputação (stateful — aprende medianas só no treino) ──────────────────
-    for imp_spec in pipe_cfg.get('imputation', []):
-        step_name = f"imputer_{imp_spec['column'].replace('/', '_')}"
-        steps.append((
-            step_name,
-            GroupMedianImputer(
-                group_col=imp_spec['group_by'],
-                target_col=imp_spec['column'],
-            ),
-        ))
-
-    # ── Escalonamento (stateful — aprende μ/σ só no treino) ──────────────────
-    scale_cols = pipe_cfg.get('scaling', {}).get('columns', [])
-    if scale_cols:
-        steps.append(('scaler', StandardScalerTransformer(columns=scale_cols)))
-
-    # ── Redução de features (opcional, tunable pelo Optuna) ──────────────────
-    reducer_kw = reducer_params or {}
-    steps.append(('reducer', FeatureReducer(**reducer_kw)))
-
-    # ── Estimador final ───────────────────────────────────────────────────────
-    steps.append(('estimator', _build_model(model_cfg, model_params)))
-
-    return SklearnPipeline(steps)
-
-# %%
-def _get_feature_importance(
-    model, feature_names: list[str],
-    X_val: pd.DataFrame, y_val: pd.Series,
-) -> pd.Series:
-    """
-    Extrai importância de features do modelo treinado.
-
-    Suporta sklearn Pipeline: extrai o estimador final via named_steps['estimator']
-    e usa os nomes de features pós-redução de named_steps['reducer'] quando
-    disponível.
-
-    Prioridade:
-        1. feature_importances_ (árvores, ensembles baseados em árvores)
-        2. coef_ (modelos lineares — usa valor absoluto)
-        3. permutation_importance (fallback model-agnóstico: SVR, KNN, ensembles mistos)
-    """
-    # Desempacota Pipeline para obter estimador + nomes de features pós-redução
-    if isinstance(model, SklearnPipeline):
-        estimator = model.named_steps['estimator']
-        reducer   = model.named_steps.get('reducer')
-        if reducer is not None and reducer.selected_features is not None:
-            # RFE mantém nomes originais; PCA/kPCA usa 'pc_0', 'pc_1', ...
-            imp_feature_names = reducer.selected_features
-        else:
-            imp_feature_names = feature_names
-    else:
-        estimator = model
-        imp_feature_names = feature_names
-
-    if hasattr(estimator, 'feature_importances_'):
-        return pd.Series(estimator.feature_importances_, index=imp_feature_names)
-    elif hasattr(estimator, 'coef_'):
-        coef = np.abs(estimator.coef_)
-        if coef.ndim > 1:
-            coef = coef.flatten()
-        return pd.Series(coef, index=imp_feature_names)
-    else:
-        # Permutation importance sobre o PIPELINE completo (inclui transformações)
-        # — usa X_val original para que o pipeline transforme consistentemente
-        sample_size = min(2000, len(X_val))
-        idx = np.random.default_rng(42).choice(len(X_val), sample_size, replace=False)
-        r = permutation_importance(
-            model, X_val.iloc[idx], y_val.iloc[idx],
-            n_repeats=5, random_state=42, n_jobs=-1,
-        )
-        return pd.Series(r.importances_mean, index=feature_names)
-    
-# %%
 # ─────────────────────────────────────────────────────────────────────────────
 # Carregamento das Configurações
 #
@@ -287,7 +101,9 @@ def _get_feature_importance(
 # 1. Configuração geral do pipeline
 config = load_yaml(CONFIG_DIR / 'pipeline.yaml')
 modeling_cfg = load_yaml(CONFIG_DIR / 'modeling.yaml')
+preprocessing_cfg = load_yaml(CONFIG_DIR / 'preprocessing.yaml')
 config.update(modeling_cfg)  # mescla modeling.yaml no config geral do pipeline
+config.update(preprocessing_cfg)  # mescla preprocessing.yaml para acesso unificado
 
 # Cria o logger
 log_cfg = config.get('logging')
@@ -361,8 +177,8 @@ logger.info('Feature reducer : method=%s', feat_red_cfg.get('method', 'none'))
 # ─────────────────────────────────────────────────────────────────────────────
 
 # %%
-features_dir  = ROOT_DIR / config.get('paths', {}).get('features_data_dir', 'data/features')
-features_file = features_dir / config.get('paths', {}).get('features_filename', 'wine_quality.parquet')
+features_dir  = ROOT_DIR / config.get('preprocessing', {}).get('output_dir', 'data/features')
+features_file = features_dir / config.get('preprocessing', {}).get('output_filename', 'wine_quality2.parquet')
 
 logger.info('─' * 60)
 logger.info('SEÇÃO 1: Carregar Features')
@@ -390,7 +206,7 @@ logger.info('Shape: %s', df.shape)
 # Separa features (X) e target (y)
 # target vem do config de seleção de features do preprocessing.yaml
 sel_cfg    = config.get('feature_selection', {})
-target_col = sel_cfg.get('target', 'median_house_value')
+target_col = sel_cfg.get('target', 'isRecommended')
 
 feature_cols = [c for c in df.columns if c != target_col]
 X = df[feature_cols].copy()
@@ -456,8 +272,8 @@ X_train, X_holdout, y_train, y_holdout = train_test_split(
 
 logger.info('Treino  : %d amostras (%.1f%%)', len(X_train), 100 * len(X_train) / len(X))
 logger.info('Holdout : %d amostras (%.1f%%)', len(X_holdout), 100 * len(X_holdout) / len(X))
-logger.info('Target no treino  — média: %.0f | std: %.0f', y_train.mean(), y_train.std())
-logger.info('Target no holdout — média: %.0f | std: %.0f', y_holdout.mean(), y_holdout.std())
+logger.info('Target no treino  — média: %.3f | std: %.3f', y_train.mean(), y_train.std())
+logger.info('Target no holdout — média: %.3f | std: %.3f', y_holdout.mean(), y_holdout.std())
 
 # %%
 # Verifica que o holdout reflete a distribuição original (sem grandes desvios)
@@ -467,19 +283,19 @@ holdout_dist = pd.qcut(y_holdout, q=5, labels=False, duplicates='drop').value_co
 dist_df = pd.DataFrame({'treino': train_dist, 'holdout': holdout_dist})
 logger.info('\n%s', dist_df.round(3).to_string())
 
-# %%
-# ─────────────────────────────────────────────────────────────────────────────
-# SEÇÃO 3 — Registro de Modelos e Configuração do Pipeline
-#
-# Os modelos são instanciados dinamicamente via importlib:
-#   module: "sklearn.linear_model"  +  class: "Ridge"  → from sklearn.linear_model import Ridge
-#
-# Cada modelo é envolvido num sklearn Pipeline (_build_pipeline) que inclui:
-#   1. GroupMedianImputer(s)      — imputa bedrooms_per_room por grupo
-#   2. StandardScalerTransformer  — z-score nas colunas contínuas
-#   3. FeatureReducer             — none | rfe | pca | kpca (config: feature_reduction)
-#   4. estimador                  — o modelo em si
-# ─────────────────────────────────────────────────────────────────────────────
+# # %%
+# # ─────────────────────────────────────────────────────────────────────────────
+# # SEÇÃO 3 — Registro de Modelos e Configuração do Pipeline
+# #
+# # Os modelos são instanciados dinamicamente via importlib:
+# #   module: "sklearn.linear_model"  +  class: "Ridge"  → from sklearn.linear_model import Ridge
+# #
+# # Cada modelo é envolvido num sklearn Pipeline (_build_pipeline) que inclui:
+# #   1. GroupMedianImputer(s)      — imputa bedrooms_per_room por grupo
+# #   2. StandardScalerTransformer  — z-score nas colunas contínuas
+# #   3. FeatureReducer             — none | rfe | pca | kpca (config: feature_reduction)
+# #   4. estimador                  — o modelo em si
+# # ─────────────────────────────────────────────────────────────────────────────
 
 # %%
 logger.info('─' * 60)
@@ -592,10 +408,10 @@ for model_name, model_cfg in models_cfg.items():
         fold_metrics = _run_cv(pipeline, X_train, y_train, cv)
         for fm in fold_metrics:
             step = fm['fold']
-            mlflow.log_metric('fold_rmse', fm['rmse'], step=step)
-            mlflow.log_metric('fold_mae',  fm['mae'],  step=step)
-            mlflow.log_metric('fold_r2',   fm['r2'],   step=step)
-            mlflow.log_metric('fold_mape', fm['mape'], step=step)
+            mlflow.log_metric('fold_accuracy', fm['accuracy'], step=step)
+            mlflow.log_metric('fold_precision',  fm['precision'],  step=step)
+            mlflow.log_metric('fold_recall',   fm['recall'],   step=step)
+            mlflow.log_metric('fold_f1', fm['f1'], step=step)
 
         # Agrega e loga métricas consolidadas
         agg = _aggregate_fold_metrics(fold_metrics)
@@ -610,9 +426,10 @@ for model_name, model_cfg in models_cfg.items():
         'reducer_params': _default_reducer_params(),
         'tuned'         : False,
     }
+    # TODO colocar todas as metricas
     logger.info(
-        '    CV RMSE: %8.2f ± %6.2f  |  R²: %.4f  |  %.1fs',
-        agg['cv_rmse_mean'], agg['cv_rmse_std'], agg['cv_r2_mean'], time.time() - t0,
+        '    CV Accuracy: %.2f  |  Recall: %.4f  | F1 %.3f | %.1fs',
+        agg['cv_accuracy_mean'], agg['cv_recall_std'], agg['cv_f1_mean'], time.time() - t0,
     )
 
 # %%
@@ -620,13 +437,12 @@ for model_name, model_cfg in models_cfg.items():
 baseline_df = pd.DataFrame([
     {
         'modelo'        : k,
-        'cv_rmse_mean'  : v['cv_rmse_mean'],
-        'cv_rmse_std'   : v['cv_rmse_std'],
-        'cv_mae_mean'   : v['cv_mae_mean'],
-        'cv_r2_mean'    : v['cv_r2_mean'],
+        'cv_accuracy_mean'  : v['cv_accuracy_mean'],
+        'cv_recall_std'   : v['cv_recall_std'],
+        'cv_f1_mean'   : v['cv_f1_mean'],
     }
     for k, v in all_results.items()
-]).sort_values('cv_rmse_mean')
+]).sort_values('cv_accuracy_mean')
 
 logger.info('\n%s', baseline_df.round(2).to_string(index=False))
 baseline_df

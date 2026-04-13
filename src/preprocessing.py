@@ -96,7 +96,7 @@ class GroupMedianImputer(BaseEstimator, TransformerMixin):
         O parâmetro y=None existe por convenção da API scikit-learn —
         não é utilizado (transformador não supervisionado).
 
-        Raises:
+        Raises:GroupMedianImputer
             KeyError: Se group_col ou target_col não existirem no DataFrame.
         """
         missing_cols = [c for c in [self.group_col, self.target_col] if c not in X.columns]
@@ -269,6 +269,11 @@ class RatioFeatureTransformer(BaseEstimator, TransformerMixin):
             X[name] = (X[num] / X[den].replace(0, np.nan)).replace(
                 [np.inf, -np.inf], np.nan
             )
+            if(X[name].isna().sum() > 0 and self.logger):
+                self.logger.warning(
+                    "RatioFeatureTransformer: '%s' tem %d valores nulos após divisão (denominador zero).",
+                    name, X[name].isna().sum()
+                )
             created.append(name)
 
         self._log("RatioFeatureTransformer: features criadas: %s", created)
@@ -336,6 +341,18 @@ class LogTransformer(BaseEstimator, TransformerMixin):
             self.logger.warning(
                 "LogTransformer: colunas não encontradas (ignoradas): %s", skipped
             )
+
+        if self.logger and created:
+            null_counts = X[created].isna().sum()
+            null_cols = [col for col, cnt in null_counts.items() if cnt > 0]
+            if null_cols:
+                self.logger.warning(
+                    "LogTransformer: colunas log com valores nulos: %s",
+                    {col: int(null_counts[col]) for col in null_cols},
+                )
+            else:
+                self.logger.info(
+                    "LogTransformer: sem valores nulos nas colunas log criadas.")
 
         return X
     

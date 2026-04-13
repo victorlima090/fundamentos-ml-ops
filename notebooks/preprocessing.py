@@ -37,7 +37,9 @@ from src.utils.config_loader import load_yaml
 
 # ── Importa todos os transformadores do módulo src/preprocessing.py ──────────
 from src.preprocessing import (
+    FeatureSelector,
     LogTransformer,
+    RatioFeatureTransformer,
 )
 
 # %%
@@ -139,7 +141,17 @@ logger.info("Transformando type em isWhite")
 df["isWhite"] = (df["type"] == "white").astype(int)
 df.drop(columns=["type"], inplace=True)
 
+logger.info("Transformando a variavel target de acordo com o threhold configurado")
+target_cfg = config.get('target', {})
+target_old = target_cfg.get('old_feature', 'quality')
+target_new = target_cfg.get('new_feature', 'isRecommended')
+df[target_new] = (df[target_old] >= target_cfg.get('threshold', 8)).astype(int)
+df.drop(columns=[target_old], inplace=True)
+
+logger.info("Shape após transformações iniciais: %s", df.shape)
+logger.info(df.head())
 # Estatísticas descritivas e nulos — baseline antes do pré-processamento
+
 logger.info('Valores ausentes por coluna:')
 for col, n_null in df.isna().sum()[df.isna().sum() > 0].items():
     logger.info('  %-25s %d (%.2f%%)', col, n_null, 100 * n_null / len(df))
@@ -154,7 +166,7 @@ logger.info(df.describe())
 
 # %%
 # ─────────────────────────────────────────────────────────────────────────────
-# SEÇÃO 4 — Features de Razão TODO
+# SEÇÃO 4 — Features de Razão 
 #
 # Totais absolutos dependem do tamanho do bloco censitário:
 #   - Um bairro com 10.000 cômodos e 2.000 domicílios é diferente de um com
@@ -168,26 +180,37 @@ logger.info(df.describe())
 # Razões são MUITO mais informativas que totais absolutos!
 # ─────────────────────────────────────────────────────────────────────────────
 
-# # %%
-# ratio_cfg = config.get('ratio_features', [])
-# logger.info('─' * 60)
-# logger.info('SEÇÃO 4: Features de Razão')
+# %%
+ratio_cfg = config.get('ratio_features', [])
+logger.info('─' * 60)
+logger.info('SEÇÃO 4: Features de Razão')
+n_nulls = df.isna().sum().sum()
+if n_nulls > 0:
+    logger.warning('ATENÇÃO: %d valores nulos encontrados nas features!', n_nulls)
+else:
+    logger.info('Sem valores nulos nas features ✓')
 
-# # %%
-# ratio_transformer = RatioFeatureTransformer(ratio_cfg, logger=logger)
-# df = ratio_transformer.transform(df)
+# %%
+ratio_transformer = RatioFeatureTransformer(ratio_cfg, logger=logger)
+df = ratio_transformer.transform(df)
+logger.info("ratio transformer end")
+n_nulls = df.isna().sum().sum()
+if n_nulls > 0:
+    logger.warning('ATENÇÃO: %d valores nulos encontrados nas features!', n_nulls)
+else:
+    logger.info('Sem valores nulos nas features ✓')
 
-# # %%
-# # Estatísticas das novas features
-# new_ratio_cols = [spec['name'] for spec in ratio_cfg]
-# logger.info(df[new_ratio_cols].describe())
+# %%
+# Estatísticas das novas features
+new_ratio_cols = [spec['name'] for spec in ratio_cfg]
+logger.info(df[new_ratio_cols].describe())
 
-# # %%
-# # Correlação com o target — confirma que razões são mais informativas
-# logger.info('Correlação das razões com median_house_value:')
-# for col in new_ratio_cols:
-#     corr = df[col].corr(df['median_house_value'])
-#     logger.info('  %-30s r = %.3f', col, corr)
+# %%
+# Correlação com o target — confirma que razões são mais informativas
+logger.info('Correlação das razões com isRecommended:')
+for col in new_ratio_cols:
+    corr = df[col].corr(df['isRecommended'])
+    logger.info('  %-30s r = %.3f', col, corr)
 
 # %%
 # ─────────────────────────────────────────────────────────────────────────────
@@ -209,11 +232,16 @@ logger.info(df.describe())
 log_cols = config.get('log_transform', {}).get('columns', [])
 logger.info('─' * 60)
 logger.info('SEÇÃO 5: Transformação Logarítmica (log1p)')
-
 # %%
 log_transformer = LogTransformer(log_cols, logger=logger)
 df = log_transformer.transform(df)
-
+logger.info("log transformer end")
+n_nulls = df.isna().sum().sum()
+if n_nulls > 0:
+    logger.warning('ATENÇÃO: %d valores nulos encontrados nas features!', n_nulls)
+else:
+    logger.info('Sem valores nulos nas features ✓')
+logger.info(df[df.isna()])
 # %%
 # Comparação de skewness: antes vs depois
 logger.info('Comparação de assimetria (skewness):')
@@ -230,40 +258,28 @@ log_created = [f'log_{c}' for c in log_cols if f'log_{c}' in df.columns]
 df[log_created].head()
 
 
-# %%
-# ─────────────────────────────────────────────────────────────────────────────
-# SEÇÃO 7 — Features Polinomiais e Interações
-#
-# A relação entre renda e preço não é perfeitamente linear:
-#   - Renda alta tem retorno decrescente sobre o preço → median_income²
-#
-# Interação income × age captura o efeito de bairros ricos E antigos:
-#   - Bairros históricos no Bay Area têm prêmio tanto de renda quanto de idade
-#   - EDA: median_income_x_housing_median_age tem r = +0.589 com o target!
-#   - Esse é um dos features engineered mais preditivos do dataset.
-# ─────────────────────────────────────────────────────────────────────────────
 
 # %%
-#TODO
-# poly_cfg = config.get('polynomial_features', [])
-# logger.info('─' * 60)
-# logger.info('SEÇÃO 7: Features Polinomiais e Interações')
+sel_cfg = config.get('feature_selection', {})
+features_to_keep = sel_cfg.get('features_to_keep', [])
+features_to_keep = features_to_keep + [sel_cfg.get('target', 'isRecommended')]  # Garante que o target é mantido
+logger.info('─' * 60)
+logger.info('SEÇÃO 9: Seleção de Features')
+logger.info('Shape antes da seleção: %s', df.shape)
+logger.info('Features solicitadas: %d', len(features_to_keep))
 
-# # %%
-# poly_transformer = PolynomialFeatureTransformer(poly_cfg, logger=logger)
-# df = poly_transformer.transform(df)
+# %%
+selector = FeatureSelector(features_to_keep, logger=logger)
+df = selector.fit_transform(df)
 
-# # %%
-# # Correlação das features polinomiais com o target
-# poly_cols = [spec['name'] for spec in poly_cfg]
-# logger.info('Correlação das features polinomiais com median_house_value:')
-# for col in poly_cols:
-#     if col in df.columns:
-#         corr = df[col].corr(df['median_house_value'])
-#         logger.info('  %-40s r = %.3f', col, corr)
+# %%
+logger.info('Shape após seleção: %s', df.shape)
+logger.info('Colunas selecionadas:')
+for i, col in enumerate(df.columns, 1):
+    logger.info('  %2d. %s', i, col)
 
-# # %%
-# logger.info(df[poly_cols].describe())
+# %%
+logger.info(df.head())
 
 # %%
 # ─────────────────────────────────────────────────────────────────────────────

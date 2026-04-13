@@ -37,25 +37,31 @@ pipeline:
 
   scaling:
     columns:
-      - "median_income"
-      - "log_median_income"
-      - "housing_median_age"
-      - "latitude"
-      - "longitude"
-      - "nearest_city_distance"
-      - "dist_san_francisco"
-      - "dist_los_angeles"
-      - "dist_san_jose"
-      - "dist_san_diego"
-      - "dist_sacramento"
-      - "bedrooms_per_room"
-      - "rooms_per_household"
-      - "population_per_household"
-      - "log_rooms_per_household"
-      - "log_population_per_household"
-      - "median_income_squared"
-      - "housing_median_age_squared"
-      - "median_income_x_housing_median_age"
+         -   fixed_acidity                       
+         -   volatile_acidity                    
+         -   citric_acid                         
+         -   residual_sugar                      
+         -   chlorides                           
+         -   free_sulfur_dioxide                 
+         -   total_sulfur_dioxide                
+         -   density                             
+         -   pH                                  
+         -   sulphates                           
+         -   alcohol                                               
+         -   isWhite                             
+         -   chlorides_over_sulphates                
+         -   density_over_alcohol                
+         -   pH_over_alcohol                     
+         -   chlorides_over_alcohol                
+         -   volatile_acidity_over_alcohol       
+         -   fixed_acidity_over_chlorides        
+         -   fixed_acidity_over_alcohol          
+         -   log_fixed_acidity                   
+         -   log_volatile_acidity                
+         -   log_residual_sugar                  
+         -   log_chlorides                       
+         -   log_free_sulfur_dioxide             
+         -   log_sulphates         
 
 # ── Redução de Features (via FeatureReducer — src/feature_reducer.py) ─────────
 #
@@ -74,7 +80,7 @@ pipeline:
 #
 # O Optuna co-otimiza: método de redução + parâmetros do método + estimador.
 feature_reduction:
-  method: "none"                # padrão para baseline; Optuna sobrescreve se search_space.method configurado
+  method: "pca"                # padrão para baseline; Optuna sobrescreve se search_space.method configurado
 
   search_space:
     method:
@@ -156,11 +162,11 @@ optuna:
 # primary: usada para selecionar o melhor modelo e direcionar o Optuna
 # additional: registradas no MLFlow mas não usadas para seleção
 metrics:
-  primary: "rmse"                   # rmse | mae | r2
+  primary: "recall"                   # rmse | mae | r2
   additional:
-    - "mae"
-    - "r2"
-    - "mape"
+    - "accuracy"
+    - "f1"
+    - "precision"
 
 # ── Modelos ───────────────────────────────────────────────────────────────────
 # Cada entrada define:
@@ -178,36 +184,12 @@ metrics:
 models:
 
   # ── Lineares ────────────────────────────────────────────────────────────────
-  linear_regression:
+  logistic_regression:
     enabled: true
     module: "sklearn.linear_model"
-    class: "LinearRegression"
+    class: "LogisticRegression"
     default_params: {}              # sem search_space → apenas baseline
 
-  ridge:
-    enabled: true
-    module: "sklearn.linear_model"
-    class: "Ridge"
-    default_params:
-      alpha: 1.0
-    search_space:
-      alpha:
-        type: "log_float"
-        low: 1.0e-4
-        high: 1.0e4
-
-  lasso:
-    enabled: false
-    module: "sklearn.linear_model"
-    class: "Lasso"
-    default_params:
-      alpha: 0.01
-      max_iter: 5000
-    search_space:
-      alpha:
-        type: "log_float"
-        low: 1.0e-5
-        high: 10.0
 
   # ── Árvore de Decisão ────────────────────────────────────────────────────────
   # max_depth controla profundidade máxima (sem limite = risco de overfitting).
@@ -215,10 +197,14 @@ models:
   decision_tree:
     enabled: true
     module: "sklearn.tree"
-    class: "DecisionTreeRegressor"
+    class: "DecisionTreeClassifier"
     default_params:
       random_state: 42
+      class_weight: "balanced"  # lida com desbalanceamento do target
     search_space:
+      class_weight:
+        type: "categorical"
+        choices: ["balanced", "balanced_subsample", null]
       max_depth:
         type: "int"
         low: 3
@@ -226,11 +212,11 @@ models:
       min_samples_split:
         type: "int"
         low: 2
-        high: 50
+        high: 100
       min_samples_leaf:
         type: "int"
         low: 1
-        high: 20
+        high: 100
       max_features:
         type: "categorical"
         choices: ["sqrt", "log2"]
@@ -242,7 +228,7 @@ models:
   knn:
     enabled: true
     module: "sklearn.neighbors"
-    class: "KNeighborsRegressor"
+    class: "KNeighborsClassifier"
     default_params:
       n_neighbors: 5
       n_jobs: -1
@@ -268,10 +254,10 @@ models:
   #   a busca. O modelo final é treinado com todos os dados.
   # C: inverso da regularização (C alto = menos regularização = mais flexível)
   # epsilon: margem de insensibilidade (erros < epsilon são ignorados)
-  svr:
+  svc:
     enabled: false
     module: "sklearn.svm"
-    class: "SVR"
+    class: "SVC"
     default_params:
       kernel: "rbf"
       C: 1.0
@@ -299,7 +285,7 @@ models:
   random_forest:
     enabled: true
     module: "sklearn.ensemble"
-    class: "RandomForestRegressor"
+    class: "RandomForestClassifier"
     default_params:
       n_estimators: 100
       random_state: 42
@@ -328,7 +314,7 @@ models:
   gradient_boosting:
     enabled: true
     module: "sklearn.ensemble"
-    class: "GradientBoostingRegressor"
+    class: "GradientBoostingClassifier"
     default_params:
       n_estimators: 100
       random_state: 42
@@ -360,7 +346,7 @@ models:
   xgboost:
     enabled: true
     module: "xgboost"
-    class: "XGBRegressor"
+    class: "XGBClassifier"
     default_params:
       n_estimators: 100
       random_state: 42
@@ -374,7 +360,7 @@ models:
       max_depth:
         type: "int"
         low: 3
-        high: 10
+        high: 20
       learning_rate:
         type: "log_float"
         low: 0.01
@@ -395,40 +381,41 @@ models:
   # ── LightGBM ─────────────────────────────────────────────────────────────────
   # Gradient boosting baseado em histogramas — mais rápido que XGBoost em datasets
   # grandes. num_leaves controla a complexidade da árvore (leaf-wise growth).
-  lightgbm:
-    enabled: true
-    module: "lightgbm"
-    class: "LGBMRegressor"
-    default_params:
-      n_estimators: 100
-      random_state: 42
-      verbosity: -1
-      n_jobs: -1
-    search_space:
-      n_estimators:
-        type: "int"
-        low: 50
-        high: 500
-      num_leaves:
-        type: "int"
-        low: 20
-        high: 200
-      learning_rate:
-        type: "log_float"
-        low: 0.01
-        high: 0.5
-      subsample:
-        type: "float"
-        low: 0.5
-        high: 1.0
-      reg_alpha:
-        type: "log_float"
-        low: 1.0e-5
-        high: 10.0
-      colsample_bytree:
-        type: "float"
-        low: 0.4
-        high: 1.0
+  # TODO
+  # lightgbm:
+  #   enabled: true
+  #   module: "lightgbm"
+  #   class: "LGBMRegressor"
+  #   default_params:
+  #     n_estimators: 100
+  #     random_state: 42
+  #     verbosity: -1
+  #     n_jobs: -1
+  #   search_space:
+  #     n_estimators:
+  #       type: "int"
+  #       low: 50
+  #       high: 500
+  #     num_leaves:
+  #       type: "int"
+  #       low: 20
+  #       high: 200
+  #     learning_rate:
+  #       type: "log_float"
+  #       low: 0.01
+  #       high: 0.5
+  #     subsample:
+  #       type: "float"
+  #       low: 0.5
+  #       high: 1.0
+  #     reg_alpha:
+  #       type: "log_float"
+  #       low: 1.0e-5
+  #       high: 10.0
+  #     colsample_bytree:
+  #       type: "float"
+  #       low: 0.4
+  #       high: 1.0
 
 # ── Ensembles ─────────────────────────────────────────────────────────────────
 # Construídos APÓS toda a otimização individual.
