@@ -34,6 +34,7 @@
 import sys
 import json
 import time
+from sklearn.metrics import precision_score, recall_score
 import yaml
 import warnings
 import importlib
@@ -66,7 +67,7 @@ for _p in PATHS_LIST:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from src.modeling import _aggregate_fold_metrics, _build_pipeline, _run_cv
+from src.modeling import aggregate_fold_metrics, build_pipeline, default_reducer_params, run_cv, suggest_param
 matplotlib.use('Agg')           # backend não-interativo: salva em arquivo sem abrir janela
 # Importações do projeto
 from src.utils.logger import get_logger
@@ -96,7 +97,35 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 #   2. modeling.yaml é carregado com yaml.safe_load (responsabilidade única)
 #   3. Os dois dicts são mesclados com config.update()
 # ─────────────────────────────────────────────────────────────────────────────
+def objectiveModel(trial, model_name, model_cfg,):
+    # parâmetros do modelo vindos do search_space do YAML
+    model_params = {}
+    for param_name, spec in (model_cfg.get('search_space') or {}).items():
+        model_params[param_name] = suggest_param(trial, param_name, spec)
 
+    # exemplo de otimização do feature reducer se estiver configurado no YAML
+    reducer_params = default_reducer_params(_reduction_method, _reduction_method_config)
+    if feature_reduction_config.get('search_space'):
+        red_search = feature_reduction_config['search_space']
+        if 'method' in red_search:
+            reducer_params['method'] = suggest_param(trial, 'reducer_method', red_search['method'])
+        method = reducer_params['method']
+        method_cfg = feature_reduction_config.get(method, {})
+        for param_name, spec in (method_cfg.get('search_space') or {}).items():
+            reducer_params[param_name] = suggest_param(trial, f"{method}_{param_name}", spec)
+
+    pipeline = build_pipeline(
+        model_cfg=model_cfg,
+        model_params=model_params,
+        reducer_params=reducer_params,
+        pipe_cfg=pipe_cfg,
+    )
+
+    fold_metrics = run_cv(pipeline, X_train, y_train, cv)
+    agg = aggregate_fold_metrics(fold_metrics)
+
+    primary = config.get('metrics', {}).get('primary', 'precision')
+    return agg[f'cv_{primary}_mean']
 # %%
 # 1. Configuração geral do pipeline
 config = load_yaml(CONFIG_DIR / 'pipeline.yaml')
@@ -128,7 +157,7 @@ tracking_uri    = modeling_cfg.get('tracking_uri', 'mlruns')
 experiment_name = modeling_cfg.get('experiment_name', 'wine-quality-experiments')
 SEED            = modeling_cfg.get('random_seed', 42)
 pipe_cfg        = config.get('pipeline', {})
-feat_red_cfg    = config.get('feature_reduction', {})
+feature_reduction_config    = config.get('feature_reduction', {})
 optuna_cfg      = config.get('optuna', {})
 _global_n_trials = optuna_cfg.get('default_trials', 50)
 
@@ -156,29 +185,17 @@ enabled_models = [k for k, v in models_cfg.items() if v.get('enabled', True)]
 logger.info('  Habilitados   : %s', enabled_models)
 logger.info('Imputadores     : %d step(s)', len(pipe_cfg.get('imputation', [])))
 logger.info('Scaling cols    : %d', len(pipe_cfg.get('scaling', {}).get('columns', [])))
-logger.info('Feature reducer : method=%s', feat_red_cfg.get('method', 'none'))
+logger.info('Feature reducer : method=%s', feature_reduction_config.get('method', 'none'))
 
 
 # %%
 # ─────────────────────────────────────────────────────────────────────────────
 # SEÇÃO 1 — Carregar Features
-#
-# O Parquet gerado por preprocessamento_walkthrough.py contém:
-#   • Features selecionadas pelo EDA (sem totais brutos)
-#   • Features de engenharia (razões, log1p, distâncias, polinomiais)
-#   • Encoding do ocean_proximity
-#   • Escala ORIGINAL (sem z-score) — escalonamento é feito no Pipeline
-#
-# ✓ MLOps — Data Leakage Corrigido:
-#   GroupMedianImputer e StandardScalerTransformer agora estão dentro do
-#   sklearn Pipeline (_build_pipeline). O fit() de cada step é chamado
-#   APENAS nos índices de treino de cada fold de CV, garantindo que nenhuma
-#   estatística do conjunto de validação/holdout contamine o treinamento.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # %%
 features_dir  = ROOT_DIR / config.get('preprocessing', {}).get('output_dir', 'data/features')
-features_file = features_dir / config.get('preprocessing', {}).get('output_filename', 'wine_quality2.parquet')
+features_file = features_dir / config.get('preprocessing', {}).get('output_filename', 'wine_quality.parquet')
 
 logger.info('─' * 60)
 logger.info('SEÇÃO 1: Carregar Features')
@@ -190,21 +207,16 @@ if not features_file.exists():
         "Execute preprocessamento.py antes deste script."
     )
 
-# %%
-# Inspeciona schema sem carregar dados (leitura de metadados é barata)
+
 schema = pq.read_schema(str(features_file))
 logger.info('Schema (%d colunas):', len(schema))
 for field in schema:
     logger.info('  %-35s %s', field.name, field.type)
 
-# %%
-# Carrega o DataFrame completo
+
 df = pq.read_table(str(features_file)).to_pandas()
 logger.info('Shape: %s', df.shape)
 
-# %%
-# Separa features (X) e target (y)
-# target vem do config de seleção de features do preprocessing.yaml
 sel_cfg    = config.get('feature_selection', {})
 target_col = sel_cfg.get('target', 'isRecommended')
 
@@ -227,28 +239,17 @@ logger.info('Features : %d colunas', len(feature_cols))
 logger.info('Target   : %s  (min=%.0f, max=%.0f, média=%.0f)',
             target_col, y.min(), y.max(), y.mean())
 
-# %%
-# Distribuição do target — referência para interpretar os erros do modelo
 logger.info(y.describe())
 
-# %%
-# Checagem de nulos — não deve haver nenhum após o preprocessing
 n_nulls = X.isna().sum().sum()
 if n_nulls > 0:
     logger.warning('ATENÇÃO: %d valores nulos encontrados nas features!', n_nulls)
 else:
     logger.info('Sem valores nulos nas features ✓')
 
-# %%
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SEÇÃO 2 — Divisão Treino / Holdout
-#
-# O holdout é separado ANTES de qualquer treino, tuning ou seleção de modelo.
-# É o "cofre selado" — nunca será visto até a avaliação final (Seção 9).
-#
-# Estratificação por quantis do target:
-#   • Garante que treino e holdout têm distribuições similares do target
-#   • Evita que toda a cauda superior (imóveis caros) caia em um único set
 # ─────────────────────────────────────────────────────────────────────────────
 
 # %%
@@ -286,15 +287,6 @@ logger.info('\n%s', dist_df.round(3).to_string())
 # # %%
 # # ─────────────────────────────────────────────────────────────────────────────
 # # SEÇÃO 3 — Registro de Modelos e Configuração do Pipeline
-# #
-# # Os modelos são instanciados dinamicamente via importlib:
-# #   module: "sklearn.linear_model"  +  class: "Ridge"  → from sklearn.linear_model import Ridge
-# #
-# # Cada modelo é envolvido num sklearn Pipeline (_build_pipeline) que inclui:
-# #   1. GroupMedianImputer(s)      — imputa bedrooms_per_room por grupo
-# #   2. StandardScalerTransformer  — z-score nas colunas contínuas
-# #   3. FeatureReducer             — none | rfe | pca | kpca (config: feature_reduction)
-# #   4. estimador                  — o modelo em si
 # # ─────────────────────────────────────────────────────────────────────────────
 
 # %%
@@ -318,46 +310,17 @@ logger.info('\n%s', models_table.to_string(index=False))
 
 # %%
 # Lê configuração da redução de features e prepara os parâmetros padrão
-_red_method     = feat_red_cfg.get('method', 'none')
-_red_method_cfg = feat_red_cfg.get(_red_method, {})
+_reduction_method     = feature_reduction_config.get('method', 'none')
+_reduction_method_config = feature_reduction_config.get(_reduction_method, {})
 
-def _default_reducer_params() -> dict:
-    """
-    Constrói o dict de parâmetros para FeatureReducer a partir do método ativo
-    e seus valores padrão em modeling.yaml (feature_reduction.<method>).
-    """
-    params = {'method': _red_method}
-    if _red_method == 'rfe':
-        params['n_features_to_select'] = _red_method_cfg.get('n_features_to_select', 15)
-        params['rfe_estimator']        = _red_method_cfg.get('rfe_estimator', 'ridge')
-    elif _red_method == 'pca':
-        params['n_components'] = _red_method_cfg.get('n_components', 15)
-    elif _red_method == 'kpca':
-        params['n_components'] = _red_method_cfg.get('n_components', 15)
-        params['kernel']       = _red_method_cfg.get('kernel', 'rbf')
-        params['gamma']        = _red_method_cfg.get('gamma', None)
-        params['degree']       = _red_method_cfg.get('degree', 3)
-        params['coef0']        = _red_method_cfg.get('coef0', 1.0)
-    return params
 
-logger.info('Feature reducer: method=%s  params=%s', _red_method, _default_reducer_params())
+
+logger.info('Feature reducer: method=%s  params=%s', _reduction_method, default_reducer_params(_reduction_method, _reduction_method_config))
 
 # %%
 # ─────────────────────────────────────────────────────────────────────────────
 # SEÇÃO 4 — Baseline: Cross-Validation com Parâmetros Padrão
-#
-# Para cada modelo habilitado:
-#   1. Instancia com os parâmetros padrão do YAML
-#   2. Executa KFold CV sobre os dados de treino
-#   3. Registra no MLFlow:
-#       • params: parâmetros padrão usados
-#       • metrics: RMSE/MAE/R²/MAPE por fold (step = índice do fold)
-#       • metrics: médias e desvios padrão agregados
-#
-# Por que fazer baseline ANTES do Optuna?
-#   • Serve como referência: o Optuna deve sempre superar o baseline
-#   • Identifica modelos claramente inadequados (ex: Linear para dados não-lineares)
-#   • Permite comparar o ganho real da otimização de hiperparâmetros
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 # %%
@@ -369,9 +332,7 @@ cv = KFold(n_splits=n_splits, shuffle=shuffle, random_state=SEED)
 logger.info('─' * 60)
 logger.info('SEÇÃO 4: Baseline CV  (%s, %d folds)', cv_cfg.get('strategy', 'kfold'), n_splits)
 
-# %%
-# Dicionário central de resultados:
-# {model_name: {cv_rmse_mean, cv_rmse_std, ..., fold_metrics, model_cfg, best_params, tuned}}
+
 all_results: dict[str, dict] = {}
 
 # %%
@@ -382,10 +343,10 @@ for model_name, model_cfg in models_cfg.items():
         continue
 
     logger.info('  [BASELINE] %-25s ...', model_name)
-    pipeline = _build_pipeline(
+    pipeline = build_pipeline(
         model_cfg   = model_cfg,
         model_params = None,
-        reducer_params = _default_reducer_params(),
+        reducer_params = default_reducer_params(_reduction_method, _reduction_method_config),
         pipe_cfg    = pipe_cfg,
     )
     t0 = time.time()
@@ -394,18 +355,36 @@ for model_name, model_cfg in models_cfg.items():
         run_name=f'baseline_{model_name}',
         tags={'stage': 'baseline', 'model': model_name},
     ):
+        # Create a parent run that contains all child runs for different trials
+        # with mlflow.start_run(run_name="study") as run:
+        #     # Log the experiment settings
+        #     n_trials = 30
+        #     mlflow.log_param("n_trials", n_trials)
+
+        #     study = optuna.create_study(direction="minimize")
+        #     study.optimize(objective, n_trials=n_trials)
+
+        #     # Log the best trial and its run ID
+        #     mlflow.log_params(study.best_trial.params)
+        #     mlflow.log_metrics({"best_error": study.best_value})
+        #     if best_run_id := study.best_trial.user_attrs.get("run_id"):
+        #         mlflow.log_param("best_child_run_id", best_run_id)
         # Registra parâmetros padrão (modelo + reducer)
+#         mlflow.register_model(
+#     model_uri="runs:/d0210c58afff4737a306a2fbc5f1ff8d/model",
+#     name="housing-price-predictor",
+# )
         default_params = {
             str(k): (str(v) if v is None else v)
             for k, v in (model_cfg.get('default_params') or {}).items()
         }
-        default_params['reducer_method'] = _red_method
+        default_params['reducer_method'] = _reduction_method
         mlflow.log_params(default_params)
         mlflow.set_tag('model_class', f"{model_cfg['module']}.{model_cfg['class']}")
-        mlflow.set_tag('reducer_method', _red_method)
+        mlflow.set_tag('reducer_method', _reduction_method)
 
         # Executa CV (clone() do pipeline garante isolação entre folds)
-        fold_metrics = _run_cv(pipeline, X_train, y_train, cv)
+        fold_metrics = run_cv(pipeline, X_train, y_train, cv)
         for fm in fold_metrics:
             step = fm['fold']
             mlflow.log_metric('fold_accuracy', fm['accuracy'], step=step)
@@ -414,7 +393,7 @@ for model_name, model_cfg in models_cfg.items():
             mlflow.log_metric('fold_f1', fm['f1'], step=step)
 
         # Agrega e loga métricas consolidadas
-        agg = _aggregate_fold_metrics(fold_metrics)
+        agg = aggregate_fold_metrics(fold_metrics)
         mlflow.log_metrics(agg)
         mlflow.log_metric('training_time_s', time.time() - t0)
 
@@ -423,14 +402,69 @@ for model_name, model_cfg in models_cfg.items():
         'fold_metrics'  : fold_metrics,
         'model_cfg'     : model_cfg,
         'best_params'   : dict(model_cfg.get('default_params') or {}),
-        'reducer_params': _default_reducer_params(),
+        'reducer_params': default_reducer_params(_reduction_method, _reduction_method_config),
         'tuned'         : False,
     }
-    # TODO colocar todas as metricas
     logger.info(
-        '    CV Accuracy: %.2f  |  Recall: %.4f  | F1 %.3f | %.1fs',
-        agg['cv_accuracy_mean'], agg['cv_recall_std'], agg['cv_f1_mean'], time.time() - t0,
+        '    CV Accuracy: %.2f  | Precision: %.4f |  Recall: %.4f  | F1 %.3f | %.1fs',
+        agg['cv_accuracy_mean'],agg['cv_precision_std'], agg['cv_recall_std'], agg['cv_f1_mean'], time.time() - t0,
     )
+    #--------------------------------------------------------
+    with mlflow.start_run(
+        run_name=f'optimized_{model_name}',
+        tags={'stage': 'optimized', 'model': model_name},
+    ):
+        study = optuna.create_study(
+        direction='maximize',
+        study_name=f'optuna_{model_name}',
+        )   
+
+        n_trials = model_cfg.get('optuna_trials', _global_n_trials)
+        study.optimize(lambda trial: objectiveModel(trial, model_name, model_cfg), n_trials=n_trials)
+        best_params = study.best_params
+
+        method = best_params['reducer_method']
+        best_reducer_params = {
+        key[len(method) + 1:]: value
+        for key, value in best_params.items()
+        if key.startswith(f'{method}_')
+        }
+
+        if method:
+            prefix = f'{method}_'
+            best_models_params = {
+                k: v
+                for k, v in best_params.items()
+                if k != 'reducer_method' and not k.startswith(prefix)
+            }
+
+        mlflow.log_params(best_models_params)
+        mlflow.set_tag('model_class', f"{model_cfg['module']}.{model_cfg['class']}")
+        mlflow.set_tag('reducer_method', _reduction_method)
+        best_pipeline = build_pipeline(
+        model_cfg=model_cfg,
+        model_params=best_models_params,
+        reducer_params={'method': method, **best_reducer_params},
+        pipe_cfg=pipe_cfg,
+        )
+        t0 = time.time()
+        fold_metrics = run_cv(best_pipeline, X_train, y_train, cv)
+        for fm in fold_metrics:
+            step = fm['fold']
+            mlflow.log_metric('fold_accuracy', fm['accuracy'], step=step)
+            mlflow.log_metric('fold_precision',  fm['precision'],  step=step)
+            mlflow.log_metric('fold_recall',   fm['recall'],   step=step)
+            mlflow.log_metric('fold_f1', fm['f1'], step=step)
+
+        # Agrega e loga métricas consolidadas
+        agg = aggregate_fold_metrics(fold_metrics)
+        mlflow.log_metrics(agg)
+        mlflow.log_metric('training_time_s', time.time() - t0)
+        best_pipeline.fit(X_train, y_train)
+        y_pred = best_pipeline.predict(X_holdout)
+
+        logger.info('Holdout precision: %.4f', precision_score(y_holdout, y_pred, average='macro', zero_division=0))
+
 
 # %%
 # Tabela comparativa do baseline
@@ -438,11 +472,12 @@ baseline_df = pd.DataFrame([
     {
         'modelo'        : k,
         'cv_accuracy_mean'  : v['cv_accuracy_mean'],
+        'cv_precision_std'  : v['cv_precision_std'],
         'cv_recall_std'   : v['cv_recall_std'],
         'cv_f1_mean'   : v['cv_f1_mean'],
     }
     for k, v in all_results.items()
-]).sort_values('cv_accuracy_mean')
+]).sort_values('cv_precision_std')
 
 logger.info('\n%s', baseline_df.round(2).to_string(index=False))
 baseline_df

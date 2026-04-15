@@ -1,3 +1,5 @@
+from typing import Any
+
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -41,7 +43,7 @@ from sklearn.pipeline import Pipeline as SklearnPipeline
 
 
 # %%
-def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
+def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     """Calcula métricas de classificação usadas neste pipeline."""
     accuracy = float(accuracy_score(y_true, y_pred))
     precision = float(
@@ -59,7 +61,7 @@ def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     }
 
 # %%
-def _run_cv(model, X: pd.DataFrame, y: pd.Series, cv: KFold) -> list[dict]:
+def run_cv(model, X: pd.DataFrame, y: pd.Series, cv: KFold) -> list[dict]:
     """
     Executa Cross-Validation e retorna métricas por fold.
 
@@ -71,13 +73,13 @@ def _run_cv(model, X: pd.DataFrame, y: pd.Series, cv: KFold) -> list[dict]:
         m = clone(model)
         m.fit(X.iloc[train_idx], y.iloc[train_idx])
         y_pred = m.predict(X.iloc[val_idx])
-        metrics = _compute_metrics(y.iloc[val_idx].values, y_pred)
+        metrics = compute_metrics(y.iloc[val_idx].values, y_pred)
         metrics['fold'] = fold_i + 1
         fold_metrics.append(metrics)
     return fold_metrics
 
 # %%
-def _aggregate_fold_metrics(fold_metrics: list[dict]) -> dict:
+def aggregate_fold_metrics(fold_metrics: list[dict]) -> dict:
     """Agrega métricas de todos os folds em média ± desvio padrão."""
     df = pd.DataFrame(fold_metrics)
     result = {}
@@ -87,7 +89,7 @@ def _aggregate_fold_metrics(fold_metrics: list[dict]) -> dict:
     return result
 
 # %%
-def _suggest_param(trial: optuna.Trial, name: str, spec: dict):
+def suggest_param(trial: optuna.Trial, name: str, spec: dict):
     """
     Constrói uma sugestão Optuna a partir de um spec do search_space do YAML.
 
@@ -110,6 +112,27 @@ def _suggest_param(trial: optuna.Trial, name: str, spec: dict):
         return trial.suggest_categorical(name, spec['choices'])
     else:
         raise ValueError(f'Tipo de search_space desconhecido: {ptype!r}')
+    
+def default_reducer_params(_red_method: Any, _red_method_cfg : Any) -> dict:
+    """
+    Constrói o dict de parâmetros para FeatureReducer a partir do método ativo
+    e seus valores padrão em modeling.yaml (feature_reduction.<method>).
+    """
+    params = {'method': _red_method}
+    if _red_method == 'rfe':
+        params['n_features_to_select'] = _red_method_cfg.get('n_features_to_select', 15)
+        params['rfe_estimator']        = _red_method_cfg.get('rfe_estimator', 'ridge')
+    elif _red_method == 'pca':
+        params['n_components'] = _red_method_cfg.get('n_components', 15)
+    elif _red_method == 'kpca':
+        params['n_components'] = _red_method_cfg.get('n_components', 15)
+        params['kernel']       = _red_method_cfg.get('kernel', 'rbf')
+        params['gamma']        = _red_method_cfg.get('gamma', None)
+        params['degree']       = _red_method_cfg.get('degree', 3)
+        params['coef0']        = _red_method_cfg.get('coef0', 1.0)
+    return params
+
+
 
 # %%
 def _build_model(model_cfg: dict, extra_params: dict | None = None):
@@ -127,7 +150,7 @@ def _build_model(model_cfg: dict, extra_params: dict | None = None):
     return cls(**params)
 
 # %%
-def _build_pipeline(
+def build_pipeline(
     model_cfg: dict,
     model_params: dict | None,
     reducer_params: dict | None,
@@ -185,7 +208,7 @@ def _build_pipeline(
     return SklearnPipeline(steps)
 
 # %%
-def _get_feature_importance(
+def get_feature_importance(
     model, feature_names: list[str],
     X_val: pd.DataFrame, y_val: pd.Series,
 ) -> pd.Series:

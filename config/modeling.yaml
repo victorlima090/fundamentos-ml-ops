@@ -162,11 +162,12 @@ optuna:
 # primary: usada para selecionar o melhor modelo e direcionar o Optuna
 # additional: registradas no MLFlow mas não usadas para seleção
 metrics:
-  primary: "recall"                   # rmse | mae | r2
+  primary: "precision"                   # rmse | mae | r2
   additional:
     - "accuracy"
     - "f1"
-    - "precision"
+    - "recall"
+    
 
 # ── Modelos ───────────────────────────────────────────────────────────────────
 # Cada entrada define:
@@ -204,7 +205,7 @@ models:
     search_space:
       class_weight:
         type: "categorical"
-        choices: ["balanced", "balanced_subsample", null]
+        choices: ["balanced", null]
       max_depth:
         type: "int"
         low: 3
