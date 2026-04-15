@@ -133,8 +133,8 @@ feature_reduction:
 
 # ── Configuração Geral do Experimento ─────────────────────────────────────────
 modeling:
-  experiment_name: "wine-quality-experiments"  # nome do experimento no MLFlow
-  tracking_uri: "mlruns"            # caminho local (sqlite:///mlruns.db para produção)
+  experiment_name: "wine-quality-experiment"
+  tracking_uri: "sqlite:///mlruns.db"
   random_seed: 42
 
 # ── Divisão Treino / Holdout ──────────────────────────────────────────────────
