@@ -169,7 +169,6 @@ def objectiveModel(trial ):
         agg = aggregate_fold_metrics(fold_metrics)
 
         primary = config.get('metrics', {}).get('primary', 'precision')
-        logger.info("Logging model params: %s", model_params)
         mlflow.log_params(model_params)
         mlflow.set_tag('model_class', f"{model_cfg['module']}.{model_cfg['class']}")
         mlflow.set_tag('reducer_method', _reduction_method)
@@ -179,7 +178,7 @@ def objectiveModel(trial ):
 
         # Agrega e loga métricas consolidadas
         agg = aggregate_fold_metrics(fold_metrics)
-        logger.info("Logging CV metrics: %s", agg)
+
         mlflow.log_metrics(agg)
         mlflow.log_metric('training_time_s', time.time() - t0)
         trial.set_user_attr("run_id", child_run.info.run_id)
@@ -374,48 +373,36 @@ for model_name, model_cfg in models_cfg.items():
         run_name=f'study_{model_name}',
         tags={'stage': 'model_training', 'model': model_name},
     ) as run:
+        with mlflow.start_run(nested=True, run_name="default_param") as child_run:
+            default_params = {
+                str(k): (str(v) if v is None else v)
+                for k, v in (model_cfg.get('default_params') or {}).items()
+            }
+            default_params['reducer_method'] = _reduction_method
+            mlflow.log_params(default_params)
+            mlflow.set_tag('model_class', f"{model_cfg['module']}.{model_cfg['class']}")
+            mlflow.set_tag('reducer_method', _reduction_method)
 
-        # Registra parâmetros padrão (modelo + reducer)
-#         mlflow.register_model(
-#     model_uri="runs:/d0210c58afff4737a306a2fbc5f1ff8d/model",
-#     name="housing-price-predictor",
-# )     
-        # with mlflow.start_run(nested=True, run_name="default_param") as child_run:
-        #     default_params = {
-        #         str(k): (str(v) if v is None else v)
-        #         for k, v in (model_cfg.get('default_params') or {}).items()
-        #     }
-        #     default_params['reducer_method'] = _reduction_method
-        #     mlflow.log_params(default_params)
-        #     mlflow.set_tag('model_class', f"{model_cfg['module']}.{model_cfg['class']}")
-        #     mlflow.set_tag('reducer_method', _reduction_method)
+            # Executa CV (clone() do pipeline garante isolação entre folds)
+            fold_metrics = run_cv(pipeline, X_train, y_train, cv)
 
-        #     # Executa CV (clone() do pipeline garante isolação entre folds)
-        #     fold_metrics = run_cv(pipeline, X_train, y_train, cv)
-        #     # for fm in fold_metrics:
-        #     #     step = fm['fold']
-        #     #     mlflow.log_metric('fold_accuracy', fm['accuracy'], step=step)
-        #     #     mlflow.log_metric('fold_precision',  fm['precision'],  step=step)
-        #     #     mlflow.log_metric('fold_recall',   fm['recall'],   step=step)
-        #     #     mlflow.log_metric('fold_f1', fm['f1'], step=step)
+            # Agrega e loga métricas consolidadas
+            agg = aggregate_fold_metrics(fold_metrics)
+            mlflow.log_metrics(agg)
+            mlflow.log_metric('training_time_s', time.time() - t0)
 
-        #     # Agrega e loga métricas consolidadas
-        #     agg = aggregate_fold_metrics(fold_metrics)
-        #     mlflow.log_metrics(agg)
-        #     mlflow.log_metric('training_time_s', time.time() - t0)
-
-        # all_results[model_name] = {
-        #     **agg,
-        #     'fold_metrics'  : fold_metrics,
-        #     'model_cfg'     : model_cfg,
-        #     'best_params'   : dict(model_cfg.get('default_params') or {}),
-        #     'reducer_params': default_reducer_params(_reduction_method, _reduction_method_config),
-        #     'tuned'         : False,
-        # }
-        # logger.info(
-        #     '    CV Accuracy: %.2f  | Precision: %.4f |  Recall: %.4f  | F1 %.3f | %.1fs',
-        #     agg['cv_accuracy_mean'],agg['cv_precision_std'], agg['cv_recall_std'], agg['cv_f1_mean'], time.time() - t0,
-        # )
+        all_results[model_name] = {
+            **agg,
+            'fold_metrics'  : fold_metrics,
+            'model_cfg'     : model_cfg,
+            'best_params'   : dict(model_cfg.get('default_params') or {}),
+            'reducer_params': default_reducer_params(_reduction_method, _reduction_method_config),
+            'tuned'         : False,
+        }
+        logger.info(
+            '    CV Accuracy: %.2f  | Precision: %.4f |  Recall: %.4f  | F1 %.3f | %.1fs',
+            agg['cv_accuracy_mean'],agg['cv_precision_std'], agg['cv_recall_std'], agg['cv_f1_mean'], time.time() - t0,
+        )
         
         #--------------------------------------------------------
         study = optuna.create_study(
@@ -490,20 +477,3 @@ if 'best_global_pipeline' in globals() and best_global_pipeline is not None:
         registered_model_name="best_optuna_model"
     )
     logger.info('Modelo global registrado no MLflow.')
-
-
-# %%
-# Tabela comparativa do baseline
-# baseline_df = pd.DataFrame([
-#     {
-#         'modelo'        : k,
-#         'cv_accuracy_mean'  : v['cv_accuracy_mean'],
-#         'cv_precision_std'  : v['cv_precision_std'],
-#         'cv_recall_std'   : v['cv_recall_std'],
-#         'cv_f1_mean'   : v['cv_f1_mean'],
-#     }
-#     for k, v in all_results.items()
-# ]).sort_values('cv_precision_std')
-
-# logger.info('\n%s', baseline_df.round(2).to_string(index=False))
-# baseline_df
