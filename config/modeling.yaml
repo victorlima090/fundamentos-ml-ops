@@ -80,12 +80,12 @@ pipeline:
 #
 # O Optuna co-otimiza: método de redução + parâmetros do método + estimador.
 feature_reduction:
-  method: "pca"                # padrão para baseline; Optuna sobrescreve se search_space.method configurado
+  method: "none"               # sem redução — PCA comprime demais com classes desbalanceadas
 
   search_space:
     method:
       type: "categorical"
-      choices: ["none", "rfe", "pca", "kpca"]
+      choices: ["none", "rfe"]    # PCA/kPCA removidos do search space
 
   rfe:
     n_features_to_select: 15
@@ -156,7 +156,11 @@ cv:
 # default_trials: nº de trials usado por TODOS os modelos e ensembles.
 # Para sobrescrever por modelo, adicione optuna_trials: N na entrada do modelo.
 optuna:
-  default_trials: 3
+  default_trials: 30  # era 3
+
+# Em cada modelo de árvore/linear, adicionar:
+default_params:
+  class_weight: "balanced"
 
 # ── Métricas ──────────────────────────────────────────────────────────────────
 # primary: usada para selecionar o melhor modelo e direcionar o Optuna
@@ -189,7 +193,10 @@ models:
     enabled: true
     module: "sklearn.linear_model"
     class: "LogisticRegression"
-    default_params: {}              # sem search_space → apenas baseline
+    default_params:
+      class_weight: "balanced"
+      max_iter: 1000
+      random_state: 42
 
 
   # ── Árvore de Decisão ────────────────────────────────────────────────────────
@@ -249,36 +256,6 @@ models:
         low: 10
         high: 60
 
-  # ── Support Vector Regression ────────────────────────────────────────────────
-  # SVR com kernel RBF é O(n²) no treino — LENTO em datasets grandes.
-  # max_samples_for_tuning: subsampling durante trials do Optuna para viabilizar
-  #   a busca. O modelo final é treinado com todos os dados.
-  # C: inverso da regularização (C alto = menos regularização = mais flexível)
-  # epsilon: margem de insensibilidade (erros < epsilon são ignorados)
-  svc:
-    enabled: false
-    module: "sklearn.svm"
-    class: "SVC"
-    default_params:
-      kernel: "rbf"
-      C: 1.0
-      epsilon: 0.1
-    max_samples_for_tuning: 5000    # subsample p/ velocidade nos trials
-    search_space:
-      kernel:
-        type: "categorical"
-        choices: ["rbf", "poly", "linear"]
-      C:
-        type: "log_float"
-        low: 0.1
-        high: 1000.0
-      epsilon:
-        type: "log_float"
-        low: 0.01
-        high: 10.0
-      gamma:
-        type: "categorical"
-        choices: ["scale", "auto"]  # só usado por rbf e poly
 
   # ── Random Forest ────────────────────────────────────────────────────────────
   # Ensemble de árvores independentes — baixa correlação entre elas é essencial.
@@ -288,6 +265,7 @@ models:
     module: "sklearn.ensemble"
     class: "RandomForestClassifier"
     default_params:
+      class_weight: "balanced"
       n_estimators: 100
       random_state: 42
       n_jobs: -1
@@ -319,6 +297,7 @@ models:
     default_params:
       n_estimators: 100
       random_state: 42
+      subsample: 0.8             # leve subsampling ajuda com desbalanceamento
     search_space:
       n_estimators:
         type: "int"
@@ -353,6 +332,7 @@ models:
       random_state: 42
       verbosity: 0
       n_jobs: -1
+      scale_pos_weight: 3        # ratio aproximado negativo/positivo com threshold=7
     search_space:
       n_estimators:
         type: "int"
@@ -382,41 +362,42 @@ models:
   # ── LightGBM ─────────────────────────────────────────────────────────────────
   # Gradient boosting baseado em histogramas — mais rápido que XGBoost em datasets
   # grandes. num_leaves controla a complexidade da árvore (leaf-wise growth).
-  # TODO
-  # lightgbm:
-  #   enabled: true
-  #   module: "lightgbm"
-  #   class: "LGBMRegressor"
-  #   default_params:
-  #     n_estimators: 100
-  #     random_state: 42
-  #     verbosity: -1
-  #     n_jobs: -1
-  #   search_space:
-  #     n_estimators:
-  #       type: "int"
-  #       low: 50
-  #       high: 500
-  #     num_leaves:
-  #       type: "int"
-  #       low: 20
-  #       high: 200
-  #     learning_rate:
-  #       type: "log_float"
-  #       low: 0.01
-  #       high: 0.5
-  #     subsample:
-  #       type: "float"
-  #       low: 0.5
-  #       high: 1.0
-  #     reg_alpha:
-  #       type: "log_float"
-  #       low: 1.0e-5
-  #       high: 10.0
-  #     colsample_bytree:
-  #       type: "float"
-  #       low: 0.4
-  #       high: 1.0
+
+  lightgbm:
+    enabled: true
+    module: "lightgbm"
+    class: "LGBMClassifier"
+    default_params:
+      class_weight: "balanced"
+      n_estimators: 100
+      random_state: 42
+      verbosity: -1
+      n_jobs: -1
+    search_space:
+      n_estimators:
+        type: "int"
+        low: 50
+        high: 500
+      num_leaves:
+        type: "int"
+        low: 20
+        high: 200
+      learning_rate:
+        type: "log_float"
+        low: 0.01
+        high: 0.5
+      subsample:
+        type: "float"
+        low: 0.5
+        high: 1.0
+      reg_alpha:
+        type: "log_float"
+        low: 1.0e-5
+        high: 10.0
+      colsample_bytree:
+        type: "float"
+        low: 0.4
+        high: 1.0
 
 # ── Ensembles ─────────────────────────────────────────────────────────────────
 # Construídos APÓS toda a otimização individual.

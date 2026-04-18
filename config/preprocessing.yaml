@@ -75,16 +75,11 @@ polynomial_features:
 feature_selection:
   target: "isRecommended"
   features_to_keep: 
-    -   fixed_acidity                       
-    -   volatile_acidity                    
+            
     -   citric_acid                         
-    -   residual_sugar                      
-    -   chlorides                           
-    -   free_sulfur_dioxide                 
     -   total_sulfur_dioxide                
     -   density                             
-    -   pH                                  
-    -   sulphates                           
+    -   pH                                              
     -   alcohol                                               
     -   isWhite                             
     -   chlorides_over_sulphates                
@@ -104,4 +99,4 @@ feature_selection:
 target:
   old_feature: "quality"
   new_feature: "isRecommended"
-  threshold: 8  # quality >= 8 é recomendado (1), caso contrário não recomendado (0)
+  threshold: 7  # quality >= 8 é recomendado (1), caso contrário não recomendado (0)

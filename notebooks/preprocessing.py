@@ -163,27 +163,10 @@ logger.info("Limpando os nomes das colunas, tirando espaco por _")
 df.columns = df.columns.str.replace(' ', '_')
 logger.info(df.describe())
 
-
-# %%
-# ─────────────────────────────────────────────────────────────────────────────
-# SEÇÃO 4 — Features de Razão 
-#
-# Totais absolutos dependem do tamanho do bloco censitário:
-#   - Um bairro com 10.000 cômodos e 2.000 domicílios é diferente de um com
-#     100 cômodos e 20 domicílios — mas ambos têm 5 cômodos/domicílio.
-#
-# EDA mostrou que:
-#   bedrooms_per_room       r = -0.256 (vs total_bedrooms r = +0.050)
-#   rooms_per_household     r = +0.152 (vs total_rooms    r = +0.134)
-#   population_per_household r = -0.247 (vs population    r = -0.025)
-#
-# Razões são MUITO mais informativas que totais absolutos!
-# ─────────────────────────────────────────────────────────────────────────────
-
 # %%
 ratio_cfg = config.get('ratio_features', [])
 logger.info('─' * 60)
-logger.info('SEÇÃO 4: Features de Razão')
+logger.info('Features de Razão')
 n_nulls = df.isna().sum().sum()
 if n_nulls > 0:
     logger.warning('ATENÇÃO: %d valores nulos encontrados nas features!', n_nulls)
@@ -241,7 +224,6 @@ if n_nulls > 0:
     logger.warning('ATENÇÃO: %d valores nulos encontrados nas features!', n_nulls)
 else:
     logger.info('Sem valores nulos nas features ✓')
-logger.info(df[df.isna()])
 # %%
 # Comparação de skewness: antes vs depois
 logger.info('Comparação de assimetria (skewness):')
@@ -281,18 +263,7 @@ for i, col in enumerate(df.columns, 1):
 # %%
 logger.info(df.head())
 
-# %%
-# ─────────────────────────────────────────────────────────────────────────────
-# SEÇÃO 11 — Persistência do Resultado
-#
-# Salva o dataset processado em Parquet (formato colunar, comprimido).
-# Este arquivo é a ENTRADA da etapa de modelagem.
-#
-# O relatório pode ser:
-#   • Versionado no repositório (rastreabilidade de dados)
-#   • Carregado diretamente pelo script de treinamento do modelo
-#   • Comparado entre execuções para detectar drift de features
-# ─────────────────────────────────────────────────────────────────────────────
+
 
 # %%
 # Cria o diretório de saída se não existir
@@ -319,3 +290,8 @@ for field in schema_out:
 df_check = pd.read_parquet(str(output_path))
 logger.info('Verificação pós-leitura — shape: %s', df_check.shape)
 logger.info(df_check.head())
+n_nulls = df_check.isna().sum().sum()
+if n_nulls > 0:
+    logger.warning('ATENÇÃO: %d valores nulos encontrados nas features!', n_nulls)
+else:
+    logger.info('Sem valores nulos nas features ✓')

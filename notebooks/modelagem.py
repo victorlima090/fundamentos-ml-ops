@@ -116,6 +116,7 @@ _global_n_trials = optuna_cfg.get('default_trials', 50)
 
 # Path.as_uri() converte o caminho absoluto para file:///E:/... no Windows,
 # evitando que o MLFlow interprete a letra do drive (E:) como URI scheme.
+print(f"Configuração do MLFlow: tracking_uri={tracking_uri} (resolvido para {Path(tracking_uri).resolve().as_uri()})")
 mlflow.set_tracking_uri(tracking_uri)
 mlflow.set_experiment(experiment_name)
 
@@ -123,23 +124,6 @@ logger.info('MLFlow tracking URI  : %s', tracking_uri)
 logger.info('MLFlow experiment    : %s', experiment_name)
 logger.info('Random seed          : %d', SEED)
 
-# %%
-# ─────────────────────────────────────────────────────────────────────────────
-# Funções Auxiliares
-#
-# Definidas aqui (topo do script) para que todas as seções as encontrem.
-# Seguem o princípio de responsabilidade única: cada função faz uma coisa.
-# ─────────────────────────────────────────────────────────────────────────────
-
-# %%
-# ─────────────────────────────────────────────────────────────────────────────
-# Carregamento das Configurações
-#
-# Mesma estratégia dos outros walkthroughs:
-#   1. load_config() carrega pipeline.yaml + data.yaml
-#   2. modeling.yaml é carregado com yaml.safe_load (responsabilidade única)
-#   3. Os dois dicts são mesclados com config.update()
-# ─────────────────────────────────────────────────────────────────────────────
 def objectiveModel(trial ):
     # parâmetros do modelo vindos do search_space do YAML
      with mlflow.start_run(nested=True, run_name=f"{model_name}_trial_{trial.number}") as child_run:
@@ -170,6 +154,7 @@ def objectiveModel(trial ):
 
         primary = config.get('metrics', {}).get('primary', 'precision')
         mlflow.log_params(model_params)
+        mlflow.log_params({f"reducer_{k}": v for k, v in reducer_params.items()})
         mlflow.set_tag('model_class', f"{model_cfg['module']}.{model_cfg['class']}")
         mlflow.set_tag('reducer_method', _reduction_method)
 
@@ -382,7 +367,7 @@ for model_name, model_cfg in models_cfg.items():
             mlflow.log_params(default_params)
             mlflow.set_tag('model_class', f"{model_cfg['module']}.{model_cfg['class']}")
             mlflow.set_tag('reducer_method', _reduction_method)
-
+            logger.info('Reducer params (baseline): %s', default_reducer_params(_reduction_method, _reduction_method_config))
             # Executa CV (clone() do pipeline garante isolação entre folds)
             fold_metrics = run_cv(pipeline, X_train, y_train, cv)
 
@@ -401,7 +386,7 @@ for model_name, model_cfg in models_cfg.items():
         }
         logger.info(
             '    CV Accuracy: %.2f  | Precision: %.4f |  Recall: %.4f  | F1 %.3f | %.1fs',
-            agg['cv_accuracy_mean'],agg['cv_precision_std'], agg['cv_recall_std'], agg['cv_f1_mean'], time.time() - t0,
+            agg['cv_accuracy_mean'],agg['cv_precision_mean'], agg['cv_recall_mean'], agg['cv_f1_mean'], time.time() - t0,
         )
         
         #--------------------------------------------------------
@@ -420,7 +405,7 @@ for model_name, model_cfg in models_cfg.items():
         for key, value in best_params.items()
         if key.startswith(f'{method}_')
         }
-
+        logger.info('Best params (Optuna): %s', best_params)
         if method:
             prefix = f'{method}_'
             best_models_params = {
@@ -431,6 +416,7 @@ for model_name, model_cfg in models_cfg.items():
 
 
         mlflow.log_params(best_models_params)
+        mlflow.log_params({f"reducer_{k}": v for k, v in best_reducer_params.items()})
         mlflow.set_tag('model_class', f"{model_cfg['module']}.{model_cfg['class']}")
         mlflow.set_tag('reducer_method', _reduction_method)
         best_pipeline = build_pipeline(
@@ -451,7 +437,7 @@ for model_name, model_cfg in models_cfg.items():
         logger.info('Best Model: ')
         logger.info(
             '    CV Accuracy: %.2f  | Precision: %.4f |  Recall: %.4f  | F1 %.3f | %.1fs',
-            agg['cv_accuracy_mean'], agg['cv_precision_std'], agg['cv_recall_std'], agg['cv_f1_mean'], time.time() - t0,
+            agg['cv_accuracy_mean'], agg['cv_precision_mean'], agg['cv_recall_mean'], agg['cv_f1_mean'], time.time() - t0,
         )
 
         logger.info('Holdout precision: %.4f', precision_score(y_holdout, y_pred, average='macro', zero_division=0))
@@ -464,6 +450,7 @@ for model_name, model_cfg in models_cfg.items():
                 best_global_pipeline = best_pipeline
                 best_global_model_name = model_name
                 best_global_params = best_models_params.copy()
+                best_run_id = child_run.info.run_id  
         if best_run_id := study.best_trial.user_attrs.get("run_id"):
             mlflow.log_param("best_child_run_id", best_run_id)
         mlflow.end_run()
@@ -471,9 +458,13 @@ for model_name, model_cfg in models_cfg.items():
 # Após o loop, registrar o melhor modelo global
 if 'best_global_pipeline' in globals() and best_global_pipeline is not None:
     logger.info(f'Registrando o melhor modelo global: {best_global_model_name} (score={best_global_score:.4f})')
-    mlflow.sklearn.log_model(
-        best_global_pipeline,
-        artifact_path="best_model",
-        registered_model_name="best_optuna_model"
-    )
-    logger.info('Modelo global registrado no MLflow.')
+    with mlflow.start_run(run_name="best_model_registration") as registration_run:
+        mlflow.set_tag("origin_model", best_global_model_name)
+        mlflow.set_tag("origin_run_id", best_run_id)
+        mlflow.log_param("best_global_score", best_global_score)
+        mlflow.sklearn.log_model(
+            best_global_pipeline,
+            artifact_path="best_model",
+            registered_model_name="best_optuna_model"
+        )
+        logger.info('Modelo global registrado no MLflow (run_id=%s, origin_run_id=%s).', registration_run.info.run_id, best_run_id)
