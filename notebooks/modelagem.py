@@ -432,6 +432,17 @@ for model_name, model_cfg in models_cfg.items():
         agg = aggregate_fold_metrics(fold_metrics)
         mlflow.log_metrics(agg)
         mlflow.log_metric('training_time_s', time.time() - t0)
+
+        # Compara métricas do modelo tunado vs baseline (parâmetros padrão)
+        baseline_agg = {k: v for k, v in all_results[model_name].items() if k in agg}
+        delta_metrics = {f'delta_{k}': agg[k] - baseline_agg[k] for k in baseline_agg}
+        mlflow.log_metrics(delta_metrics)
+        logger.info('Comparação tunado vs baseline (%s):', model_name)
+        for metric_key, delta_val in delta_metrics.items():
+            base_val = baseline_agg[metric_key.replace('delta_', '')]
+            tuned_val = agg[metric_key.replace('delta_', '')]
+            logger.info('  %-35s baseline=%.4f  tunado=%.4f  delta=%+.4f', metric_key, base_val, tuned_val, delta_val)
+
         best_pipeline.fit(X_train, y_train)
         y_pred = best_pipeline.predict(X_holdout)
         logger.info('Best Model: ')

@@ -77,12 +77,7 @@ logger.info('Compressão : %s', compression)
 # Lista as transformações configuradas no YAML
 logger.info('Imputações configuradas : %d', len(config.get('imputation', [])))
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Inspeciona a configuração carregada
-#
-# Ponto de ensino: o aluno vê exatamente o que foi lido do YAML.
-# Qualquer mudança no preprocessing.yaml aparece aqui sem alterar o código.
-# ─────────────────────────────────────────────────────────────────────────────
+
 
 # %%
 prep_config    = config.get('preprocessing', {})
@@ -102,10 +97,6 @@ logger.info('Features polinomiais    : %d', len(config.get('polynomial_features'
 logger.info('Configurações de encoding: %s', config.get('categorical_encoding', {}))
 # logger.info('Features para seleção    : %d', len(config.get('feature_selection', {}).get('features_to_keep', []))) TODO
 
-# %%
-# ─────────────────────────────────────────────────────────────────────────────
-# SEÇÃO 1 — Carregamento do Dataset
-# ─────────────────────────────────────────────────────────────────────────────
 
 # %%
 # Caminho do Parquet gerado pela etapa de ingestão
@@ -195,21 +186,6 @@ for col in new_ratio_cols:
     corr = df[col].corr(df['isRecommended'])
     logger.info('  %-30s r = %.3f', col, corr)
 
-# %%
-# ─────────────────────────────────────────────────────────────────────────────
-# SEÇÃO 5 — Transformação Logarítmica (log1p)
-#
-# Features com skewness > 1.5 têm cauda longa que distorce modelos lineares
-# e aumenta a influência de outliers extremos.
-#
-# log1p(x) = log(1+x):
-#   - Seguro para x=0 (evita log(0) = -Inf)
-#   - Comprime a cauda direita, reduzindo a assimetria
-#   - Melhora a linearidade com o target
-#
-# Colunas originais são mantidas para referência.
-# Colunas transformadas recebem prefixo 'log_'.
-# ─────────────────────────────────────────────────────────────────────────────
 
 # %%
 log_cols = config.get('log_transform', {}).get('columns', [])

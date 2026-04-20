@@ -133,7 +133,7 @@ feature_reduction:
 
 # ── Configuração Geral do Experimento ─────────────────────────────────────────
 modeling:
-  experiment_name: "wine-quality-experiment"
+  experiment_name: "final-wine-quality-experiment"
   tracking_uri: "sqlite:///mlruns.db"
   random_seed: 42
 
@@ -409,24 +409,25 @@ models:
 #
 # VotingRegressor: média ponderada das predições dos modelos base.
 #   Optuna otimiza os pesos inteiros de cada modelo base (1..10).
-ensembles:
-  top_n_base_models: 3              # usa os N melhores individuais como base
+# TODO
+# ensembles:
+#   top_n_base_models: 3              # usa os N melhores individuais como base
 
-  stacking:
-    enabled: false
-    inner_cv_folds: 3               # CV interno do stacking (3 para velocidade)
-    meta_learner_search_space:
-      meta_alpha:
-        type: "log_float"
-        low: 1.0e-4
-        high: 1.0e4
-      # passthrough=True removido: concatena X bruto (com NaN) às meta-features
-      # fazendo o Ridge meta-learner falhar. Sempre passthrough=False.
+#   stacking:
+#     enabled: false
+#     inner_cv_folds: 3               # CV interno do stacking (3 para velocidade)
+#     meta_learner_search_space:
+#       meta_alpha:
+#         type: "log_float"
+#         low: 1.0e-4
+#         high: 1.0e4
+#       # passthrough=True removido: concatena X bruto (com NaN) às meta-features
+#       # fazendo o Ridge meta-learner falhar. Sempre passthrough=False.
 
-  voting:
-    enabled: false
-    weight_low: 1                   # peso mínimo por modelo base
-    weight_high: 10                 # peso máximo por modelo base
+#   voting:
+#     enabled: false
+#     weight_low: 1                   # peso mínimo por modelo base
+#     weight_high: 10                 # peso máximo por modelo base
 
 # ── Artefatos ─────────────────────────────────────────────────────────────────
 # Todos os plots são salvos em output_dir e logados no MLFlow como artefatos.
