@@ -278,24 +278,6 @@ def _montar_features_modelo() -> pd.DataFrame:
     }
     print("Features base para inferência:", base)
     df = preprocessar_entradas(base)
-    # ratio_transformer = RatioFeatureTransformer(ratio_cfg, logger=logger)
-    # df = ratio_transformer.transform(df)
-    
-    # log_cols = config.get('log_transform', {}).get('columns', [])
-
-
-    # log_transformer = LogTransformer(log_cols, logger=logger)
-    # df = log_transformer.transform(df)
-
-    # sel_cfg = config.get('feature_selection', {})
-    # features_to_keep = sel_cfg.get('features_to_keep', [])
-    # features_to_keep = features_to_keep + [sel_cfg.get('target', 'isRecommended')]  # Garante que o target é mantido
-
-    # selector = FeatureSelector(features_to_keep, logger=logger)
-    # df = selector.fit_transform(df)
-
-    # colunas_modelo = obter_nomes_colunas_features()
-    # return pd.DataFrame([df]).reindex(columns=colunas_modelo, fill_value=0.0)
     return df
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -351,52 +333,6 @@ if btn_prever:
 
         ordem_igual = features_df.columns.tolist() == linha_ref.columns.tolist()
 
-        # with st.expander("🛠️ Diagnóstico de features (debug)", expanded=True):
-        #     st.markdown(f"**Colunas no formulário:** {len(colunas_form)}  |  **Colunas no parquet:** {len(colunas_parquet)}")
-        #     if apenas_form:
-        #         st.error(f"Colunas APENAS no formulário: {sorted(apenas_form)}")
-        #     if apenas_parquet:
-        #         st.error(f"Colunas APENAS no parquet: {sorted(apenas_parquet)}")
-        #     if not apenas_form and not apenas_parquet:
-        #         st.success("Colunas idênticas ✓")
-
-        #     if ordem_igual:
-        #         st.success("Ordem das colunas idêntica ✓")
-        #     else:
-        #         st.error("Ordem das colunas DIFERENTE — valores chegam nas features erradas!")
-        #         ordem_df = pd.DataFrame({
-        #             "pos": range(len(features_df.columns)),
-        #             "formulario": features_df.columns.tolist(),
-        #             "parquet":    linha_ref.columns.tolist(),
-        #             "igual":      [a == b for a, b in zip(features_df.columns, linha_ref.columns)],
-        #         })
-        #         st.dataframe(ordem_df[~ordem_df["igual"]], use_container_width=True)
-
-        #     nans = features_df.isna().sum().sum()
-        #     if nans > 0:
-        #         st.error(f"NaN encontrados: {nans}")
-        #     else:
-        #         st.success("Sem NaN ✓")
-
-        #     comparacao = features_df.T.rename(columns={0: "formulario"}).join(
-        #         linha_ref.T.rename(columns={0: "parquet_ref"}), how="outer"
-        #     )
-        #     comparacao["diferenca"] = (comparacao["formulario"] - comparacao["parquet_ref"]).abs()
-        #     st.dataframe(comparacao.style.format("{:.6f}"), use_container_width=True, height=600)
-
-        #     # Teste de sensibilidade: perturba cada coluna +10% e verifica se a probabilidade muda
-        #     st.markdown("**Teste de sensibilidade do modelo:**")
-        #     prob_base = modelo.predict_proba(features_df)[0, 1]
-        #     sensibilidade = []
-        #     for col in features_df.columns:
-        #         df_perturb = features_df.copy()
-        #         df_perturb[col] = df_perturb[col] * 1.5 + 1.0
-        #         prob_perturb = modelo.predict_proba(df_perturb)[0, 1]
-        #         sensibilidade.append({"feature": col, "prob_base": prob_base, "prob_perturbada": prob_perturb, "delta": abs(prob_perturb - prob_base)})
-        #     sens_df = pd.DataFrame(sensibilidade).sort_values("delta", ascending=False)
-        #     st.dataframe(sens_df.style.format({"prob_base": "{:.4f}", "prob_perturbada": "{:.4f}", "delta": "{:.4f}"}), use_container_width=True)
-        #     if sens_df["delta"].max() < 0.001:
-        #         st.error("⚠️ Modelo completamente insensível a perturbações — problema está no modelo treinado (PCA + desbalanceamento). Retreine com threshold menor ou class_weight=balanced.")
 
     # ── Passo 4: exibição dos resultados ──────────────────────────────────────
     if pipeline_ok and predicao_ok:
