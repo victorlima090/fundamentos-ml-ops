@@ -462,8 +462,8 @@ for model_name, model_cfg in models_cfg.items():
                 best_global_model_name = model_name
                 best_global_params = best_models_params.copy()
                 best_run_id = child_run.info.run_id  
-        if best_run_id := study.best_trial.user_attrs.get("run_id"):
-            mlflow.log_param("best_child_run_id", best_run_id)
+            if best_run_id := study.best_trial.user_attrs.get("run_id"):
+                mlflow.log_param("best_child_run_id", best_run_id)
         mlflow.end_run()
 
 # Após o loop, registrar o melhor modelo global

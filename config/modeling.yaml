@@ -85,7 +85,7 @@ feature_reduction:
   search_space:
     method:
       type: "categorical"
-      choices: ["none", "rfe"]    # PCA/kPCA removidos do search space
+      choices: ["none", "rfe", "pca", "kpca"]    # PCA/kPCA removidos do search space
 
   rfe:
     n_features_to_select: 15
